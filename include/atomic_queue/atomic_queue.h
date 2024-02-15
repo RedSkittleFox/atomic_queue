@@ -458,7 +458,7 @@ public:
     // The special member functions are not thread-safe.
 
     AtomicQueueB(unsigned size, const allocator_type& alloc = A())
-        : AllocatorElements(AllocatorElements(alloc))
+        : AllocatorElements(alloc)
         , size_(std::max(details::round_up_to_power_of_2(size), 1u << (SHUFFLE_BITS * 2)))
         , elements_(AllocatorElements::allocate(size_)) {
         assert(std::atomic<T>{NIL}.is_lock_free()); // Queue element type T is not atomic. Use AtomicQueue2/AtomicQueueB2 for such element types.
@@ -498,7 +498,7 @@ public:
     }
 
     allocator_type get_allocator() const noexcept {
-        return static_cast<allocator_type>(static_cast<const AllocatorElements&>(*this));
+        return static_cast<const AllocatorElements&>(*this);
     }
 };
 
@@ -506,8 +506,7 @@ public:
 
 template<class T, class A = std::allocator<T>, bool MAXIMIZE_THROUGHPUT = true, bool TOTAL_ORDER = false, bool SPSC = false>
 class AtomicQueueB2 : public AtomicQueueCommon<AtomicQueueB2<T, A, MAXIMIZE_THROUGHPUT, TOTAL_ORDER, SPSC>>,
-                      private A, // TODO: Do we want to inherit from two allocators if we are dealing with a stateful allocator?
-                      private std::allocator_traits<A>::template rebind_alloc<std::atomic<uint8_t>> {
+                      private A {
     using Base = AtomicQueueCommon<AtomicQueueB2<T, A, MAXIMIZE_THROUGHPUT, TOTAL_ORDER, SPSC>>;
     using State = typename Base::State;
     friend Base;
@@ -542,6 +541,10 @@ class AtomicQueueB2 : public AtomicQueueCommon<AtomicQueueB2<T, A, MAXIMIZE_THRO
         Base::template do_push_any(std::forward<U>(element), states_[index], elements_[index]);
     }
 
+    AllocatorStates get_allocator_states() const noexcept {
+        return static_cast<const AllocatorElements&>(*this);
+    }
+
 public:
     using value_type = T;
     using allocator_type = A;
@@ -550,9 +553,8 @@ public:
 
     AtomicQueueB2(unsigned size, const allocator_type& alloc = A())
         : AllocatorElements(alloc)
-        , AllocatorStates(AllocatorElements(alloc))
         , size_(std::max(details::round_up_to_power_of_2(size), 1u << (SHUFFLE_BITS * 2)))
-        , states_(AllocatorStates::allocate(size_))
+        , states_(get_allocator_states().allocate(size_))
         , elements_(AllocatorElements::allocate(size_)) {
         for(auto p = states_, q = states_ + size_; p < q; ++p)
             p->store(Base::EMPTY, X);
@@ -565,7 +567,6 @@ public:
     AtomicQueueB2(AtomicQueueB2&& b) noexcept
         : Base(static_cast<Base&&>(b))
         , AllocatorElements(static_cast<AllocatorElements&&>(b)) // TODO: This must be noexcept, static_assert that.
-        , AllocatorStates(static_cast<AllocatorStates&&>(b))     // TODO: This must be noexcept, static_assert that.
         , size_(b.size_)
         , states_(b.states_)
         , elements_(b.elements_) {
@@ -585,7 +586,7 @@ public:
             for(auto p = elements_, q = elements_ + size_; p < q; ++p)
                 std::allocator_traits<AllocatorElements>::destroy(ae, p);
             AllocatorElements::deallocate(elements_, size_); // TODO: This must be noexcept, static_assert that.
-            AllocatorStates::deallocate(states_, size_); // TODO: This must be noexcept, static_assert that.
+            get_allocator_states().deallocate(states_, size_); // TODO: This must be noexcept, static_assert that.
         }
     }
 
@@ -593,7 +594,6 @@ public:
         using std::swap;
         this->Base::swap(b);
         swap(static_cast<AllocatorElements&>(*this), static_cast<AllocatorElements&>(b));
-        swap(static_cast<AllocatorStates&>(*this), static_cast<AllocatorStates&>(b));
         swap(size_, b.size_);
         swap(states_, b.states_);
         swap(elements_, b.elements_);
@@ -604,7 +604,7 @@ public:
     }
 
     allocator_type get_allocator() const noexcept {
-        return static_cast<allocator_type>(static_cast<const allocator_type&>(*this));
+        return static_cast<const allocator_type&>(*this);
     }
 };
 
